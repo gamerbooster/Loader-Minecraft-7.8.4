@@ -30,16 +30,20 @@ jobs:
           java-version: "17"
 
       - name: Preparar Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          accept-android-sdk-licenses: true
+          log-accepted-android-sdk-licenses: false
+          packages: ""
 
-      - name: Instalar Android SDK
+      - name: Aceptar e instalar Android SDK
         shell: bash
         run: |
           set -euo pipefail
 
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses >/dev/null || true
 
-          sdkmanager \
+          sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;35.0.0"
