@@ -119,6 +119,21 @@ jobs:
 
           echo "VERSION CHECK: PASS"
 
+
+      - name: Instalar dependencias de pruebas
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m pip install --disable-pip-version-check --no-cache-dir Pillow
+
+      - name: Instalar dependencias de pruebas
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python -m pip install --disable-pip-version-check --no-cache-dir Pillow
+
       - name: Ejecutar suite de pruebas
         shell: bash
         run: |
@@ -127,6 +142,7 @@ jobs:
           cd "$NEX_PROJECT"
 
           python tools/run_tests.py
+          
 
       - name: Sincronizar core Python con Android
         shell: bash
