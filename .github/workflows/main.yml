@@ -12,19 +12,19 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Descargar repositorio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Preparar Python 3.13
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
       - name: Preparar Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -32,23 +32,21 @@ jobs:
       - name: Preparar Android SDK
         uses: android-actions/setup-android@v4
         with:
+          packages: ""
           accept-android-sdk-licenses: true
           log-accepted-android-sdk-licenses: false
-          packages: ""
 
-      - name: Aceptar e instalar Android SDK
+      - name: Instalar Android SDK 36
         shell: bash
         run: |
           set -euo pipefail
-
-          yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-36" \
             "build-tools;35.0.0"
 
-      - name: Encontrar ZIP de NEXLoader 7.8.4
+      - name: Buscar ZIP de NEXLoader 7.8.4
         shell: bash
         run: |
           set -euo pipefail
@@ -56,16 +54,16 @@ jobs:
           ZIP="NEXLoader-7.8.4-java-android-source.zip"
 
           if [ ! -f "$ZIP" ]; then
-            echo "ERROR: No se encontró $ZIP"
+            echo "ERROR: no se encontró $ZIP"
             echo "Archivos disponibles:"
-            ls -lah
+            find . -maxdepth 2 -type f -printf '%p\n' | sort
             exit 1
           fi
 
           echo "ZIP encontrado:"
           ls -lh "$ZIP"
 
-      - name: Extraer NEXLoader 7.8.4
+      - name: Extraer proyecto NEXLoader 7.8.4
         shell: bash
         run: |
           set -euo pipefail
@@ -76,21 +74,33 @@ jobs:
             "NEXLoader-7.8.4-java-android-source.zip" \
             -d extracted
 
-          PROJECT="extracted/NEXLoader-7.8.4"
+          PROJECT="$(
+            find extracted \
+              -mindepth 1 \
+              -maxdepth 3 \
+              -type f \
+              -name VERSION \
+              -print \
+              -quit |
+            sed 's#/VERSION$##'
+          )"
 
-          if [ ! -d "$PROJECT" ]; then
-            echo "ERROR: No se encontró la carpeta NEXLoader-7.8.4"
-            find extracted -maxdepth 3 -type f | sort
+          if [ -z "$PROJECT" ]; then
+            echo "ERROR: no se encontró VERSION dentro del ZIP"
+            find extracted -maxdepth 4 -type f | sort | head -200
             exit 1
           fi
 
-          echo "Proyecto encontrado:"
+          echo "Proyecto detectado:"
           echo "$PROJECT"
 
           test -f "$PROJECT/VERSION"
+          test -f "$PROJECT/core/nex_convert.py"
+          test -f "$PROJECT/tools/run_tests.py"
+          test -f "$PROJECT/tools/check_versions.py"
+          test -f "$PROJECT/tools/sync_android_core.py"
           test -f "$PROJECT/android/settings.gradle"
           test -f "$PROJECT/android/app/build.gradle"
-          test -f "$PROJECT/core/nex_convert.py"
 
           echo "NEX_PROJECT=$PROJECT" >> "$GITHUB_ENV"
 
@@ -101,25 +111,22 @@ jobs:
 
           cd "$NEX_PROJECT"
 
-          VERSION="$(cat VERSION | tr -d '[:space:]')"
+          VERSION="$(tr -d '[:space:]' < VERSION)"
 
           echo "Versión detectada: $VERSION"
 
           test "$VERSION" = "7.8.4"
 
-          echo "VERSION CHECK PASS: $VERSION"
+          echo "VERSION CHECK: PASS"
 
-      - name: Ejecutar pruebas del conversor
+      - name: Ejecutar suite de pruebas
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$NEX_PROJECT"
 
-          python -m unittest discover \
-            -s core/tests \
-            -p 'test*.py' \
-            -v
+          python tools/run_tests.py
 
       - name: Sincronizar core Python con Android
         shell: bash
@@ -130,7 +137,7 @@ jobs:
 
           python tools/sync_android_core.py
 
-      - name: Verificar versiones del proyecto
+      - name: Verificar versiones sincronizadas
         shell: bash
         run: |
           set -euo pipefail
@@ -139,18 +146,18 @@ jobs:
 
           python tools/check_versions.py
 
-      - name: Auditar manifest Bedrock
+      - name: Auditar manifest Bedrock generado
         shell: bash
         run: |
           set -euo pipefail
 
           cd "$NEX_PROJECT"
 
-          rm -rf /tmp/nex_manifest_test
+          rm -rf /tmp/nex_ci_manifest_audit
 
           python core/nex_convert.py \
             examples/capdemo.jar \
-            /tmp/nex_manifest_test
+            /tmp/nex_ci_manifest_audit
 
           python - <<'PY'
           from pathlib import Path
@@ -158,34 +165,55 @@ jobs:
           import json
           import zipfile
 
-          out = Path("/tmp/nex_manifest_test")
+          root = Path(".")
+          out = Path("/tmp/nex_ci_manifest_audit")
 
-          addons = sorted(out.glob("*.mcaddon"))
+          version = (
+              root / "VERSION"
+          ).read_text(
+              encoding="utf-8"
+          ).strip()
+
+          addons = sorted(
+              out.glob("*.mcaddon")
+          )
 
           assert len(addons) == 1, addons
 
           addon = addons[0]
 
-          print("MCADDON generado:", addon)
+          print(
+              "MCADDON generado:",
+              addon
+          )
 
           with zipfile.ZipFile(addon) as outer:
 
-              names = set(outer.namelist())
+              names = set(
+                  outer.namelist()
+              )
 
-              assert "capdemo.behavior.mcpack" in names
-              assert "capdemo.resource.mcpack" in names
-
-              for name in [
+              expected = {
                   "capdemo.behavior.mcpack",
                   "capdemo.resource.mcpack",
-              ]:
+              }
+
+              assert names == expected, names
+
+              for name in sorted(names):
 
                   with zipfile.ZipFile(
-                      io.BytesIO(outer.read(name))
+                      io.BytesIO(
+                          outer.read(name)
+                      )
                   ) as inner:
 
                       manifest = json.loads(
-                          inner.read("manifest.json").decode("utf-8")
+                          inner.read(
+                              "manifest.json"
+                          ).decode(
+                              "utf-8"
+                          )
                       )
 
                       print(
@@ -193,21 +221,39 @@ jobs:
                           name
                       )
 
-                      assert "metadata" not in manifest
+                      assert "metadata" not in manifest, (
+                          name,
+                          manifest.get("metadata")
+                      )
 
-                      description = manifest["header"]["description"]
+                      description = (
+                          manifest[
+                              "header"
+                          ][
+                              "description"
+                          ]
+                      )
 
-                      assert "Generated by NEX Loader 7.8.4" in description
+                      expected_text = (
+                          f"Generated by NEX Loader {version}"
+                      )
 
-          print("MANIFEST CHECK PASS")
+                      assert (
+                          expected_text
+                          in description
+                      ), description
+
+          print(
+              "FINAL MCADDON MANIFEST AUDIT: PASS"
+          )
           PY
 
-      - name: Preparar Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - name: Preparar Gradle 8.13
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.13"
 
-      - name: Construir APK
+      - name: Compilar APK Debug
         shell: bash
         working-directory: ${{ env.NEX_PROJECT }}/android
         env:
@@ -221,7 +267,8 @@ jobs:
             --stacktrace \
             --console=plain
 
-      - name: Comprobar versión real del APK
+      - name: Comprobar APK y versionName
+        id: apk
         shell: bash
         run: |
           set -euo pipefail
@@ -230,36 +277,43 @@ jobs:
 
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
 
-          test -f "$APK"
-
           AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
 
-          VERSION="$(cat VERSION | tr -d '[:space:]')"
+          test -f "$APK"
+          test -x "$AAPT"
+
+          VERSION="$(
+            tr -d '[:space:]' < VERSION
+          )"
 
           ACTUAL="$(
             "$AAPT" dump badging "$APK" |
-            sed -n "s/.*versionName='\([^']*\)'.*/\1/p" |
+            sed -n \
+              "s/.*versionName='\([^']*\)'.*/\1/p" |
             head -n 1
           )"
 
           echo "Versión esperada: $VERSION"
-          echo "Versión del APK: $ACTUAL"
+          echo "Versión encontrada en APK: $ACTUAL"
 
           test "$ACTUAL" = "$VERSION"
 
-          mkdir -p android/app/build/outputs/apk/debug
+          OUT="android/app/build/outputs/apk/debug/NEXLoader-$VERSION-debug.apk"
 
           mv \
             "$APK" \
-            "android/app/build/outputs/apk/debug/NEXLoader-$VERSION-debug.apk"
+            "$OUT"
 
-          echo "APK correcto: NEXLoader-$VERSION-debug.apk"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "APK final:"
+          echo "$OUT"
 
       - name: Subir APK
         uses: actions/upload-artifact@v4
         with:
-          name: NEXLoader-7.8.4-debug
-          path: ${{ env.NEX_PROJECT }}/android/app/build/outputs/apk/debug/NEXLoader-7.8.4-debug.apk
+          name: NEXLoader-${{ steps.apk.outputs.version }}-debug
+          path: ${{ env.NEX_PROJECT }}/android/app/build/outputs/apk/debug/NEXLoader-${{ steps.apk.outputs.version }}-debug.apk
           if-no-files-found: error
 
       - name: Subir información de compilación
