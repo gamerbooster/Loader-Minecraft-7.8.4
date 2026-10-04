@@ -136,7 +136,18 @@ jobs:
           cd "$NEX_PROJECT"
 
           python tools/sync_android_core.py
+      - name: Preparar VERSION para Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
 
+          cp "$NEX_PROJECT/VERSION" "$NEX_PROJECT/android/VERSION"
+
+          echo "VERSION copiada correctamente:"
+          cat "$NEX_PROJECT/android/VERSION"
+
+          test -f "$NEX_PROJECT/android/VERSION"
+          
       - name: Verificar versiones sincronizadas
         shell: bash
         run: |
