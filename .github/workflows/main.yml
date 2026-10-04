@@ -51,7 +51,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ZIP="NEXLoader-7.8.4-java-android-source.zip"
+          ZIP="NEXLoader-7.8.4-java-android-source-FIXED.zip"
 
           if [ ! -f "$ZIP" ]; then
             echo "ERROR: no se encontró $ZIP"
@@ -71,7 +71,7 @@ jobs:
           rm -rf extracted
 
           unzip -q \
-            "NEXLoader-7.8.4-java-android-source.zip" \
+            "NEXLoader-7.8.4-java-android-source-FIXED.zip" \
             -d extracted
 
           PROJECT="$(
