@@ -1,0 +1,108 @@
+# NEXLoader experiment - FASE 1 (shaders): build Newb X Legacy (MIT source) from source, several variants in ONE run.
+# SEPARATE workflow: it does not touch Main.yml. Put it in .github/workflows/ and run it manually.
+# NOT TESTED by the author (no network where it was written).
+name: Newb build matrix (NEXLoader experiment)
+
+on:
+  workflow_dispatch:
+    inputs:
+      refs_json:
+        description: 'JSON list of refs of devendrn/newb-x-mcbe (branch, tag or commit). Example: ["main"]'
+        default: '["main"]'
+      platforms_json:
+        description: 'JSON list of build profiles (README: android, windows, ios, multiplatform)'
+        default: '["android","multiplatform"]'
+
+jobs:
+  build:
+    name: build ${{ matrix.ref }} / ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ fromJSON(inputs.refs_json) }}
+        platform: ${{ fromJSON(inputs.platforms_json) }}
+    steps:
+      - name: Attempt id
+        id: id
+        run: |
+          slug="$(printf '%s' "${{ matrix.ref }}-${{ matrix.platform }}" | tr -c 'A-Za-z0-9._-' '_')"
+          echo "slug=$slug" >> "$GITHUB_OUTPUT"
+
+      - name: Get Newb source (MIT)
+        uses: actions/checkout@v4
+        with:
+          repository: devendrn/newb-x-mcbe
+          ref: ${{ matrix.ref }}
+          path: newb
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: "Install dependencies (README says lazurite must be v0.9.0)"
+        working-directory: newb
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements.txt 2>&1 | tee ../install.log
+          python -m pip list 2>/dev/null | grep -i -E "lazurite|rich" | tee -a ../install.log
+
+      - name: Report repo layout and config (so the next iteration can be written against real files)
+        working-directory: newb
+        run: |
+          {
+            echo "# ref: ${{ matrix.ref }}  platform: ${{ matrix.platform }}  commit: $(git rev-parse HEAD)"
+            echo "## tree"
+            find src include tool docs -type f 2>/dev/null | sort | head -600
+            echo
+            echo "## pack_config.toml"
+            cat src/newb/pack_config.toml 2>/dev/null || echo "(not found)"
+            echo
+            echo "## config-like files"
+            find src include -type f \( -iname '*config*' -o -iname '*.toml' \) 2>/dev/null | sort | while read -r f; do
+              echo "### $f"; head -c 30000 "$f"; echo
+            done
+            echo
+            echo "## build.sh"
+            cat build.sh
+          } > ../report.txt 2>&1 || true
+
+      - name: Setup build environment (downloads shaderc and material data)
+        working-directory: newb
+        run: |
+          set -o pipefail
+          ./build.sh setup 2>&1 | tee ../setup.log
+
+      - name: Build pack
+        working-directory: newb
+        run: |
+          set -o pipefail
+          ./build.sh pack -p ${{ matrix.platform }} 2>&1 | tee ../build.log
+
+      - name: Summary of produced files
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.ref }} / ${{ matrix.platform }}"
+            ls -la newb/build 2>&1 || true
+            find newb/build -maxdepth 3 -name '*.mcpack' -exec ls -l {} \; 2>&1 || true
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ steps.id.outputs.slug }}
+          path: |
+            report.txt
+            install.log
+            setup.log
+            build.log
+          if-no-files-found: ignore
+
+      - name: Upload pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: pack-${{ steps.id.outputs.slug }}
+          path: newb/build/*.mcpack
+          if-no-files-found: error
